@@ -71,7 +71,7 @@ export default function DrawingPage() {
             {/* ฟีเจอร์ที่จะมาในอนาคต */}
             <div className="mt-12 p-6 bg-gray-100 rounded-lg">
               <h3 className="text-2xl font-bold text-gray-700 mb-4">
-                🚀 ฟีเจอร์ที่กำลังจะมา
+                🚀 ฟีเจอร์ที่กำลังจะมาแน่นอนแต่ไม่นอนแน่นะจ๊ะ
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
                 <div className="bg-white p-4 rounded-lg">
