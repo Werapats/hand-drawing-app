@@ -68,16 +68,25 @@ export default function DrawingPage() {
               🎨 เริ่มวาดรูป
             </button>
             
-            {/* ฟีเจอร์ที่จะมาในอนาคต */}
-            <div className="mt-12 p-6 bg-gray-100 rounded-lg">
+            {/* ปุ่มไปโหมด Battle */}
+            <div className="mt-12 p-6 bg-linear-to-r from-purple-100 to-pink-100 rounded-lg">
               <h3 className="text-2xl font-bold text-gray-700 mb-4">
-                🚀 ฟีเจอร์ที่กำลังจะมาแน่นอนแต่ไม่นอนแน่นะจ๊ะ
+                ⚔️ พร้อมสู้แล้วหรือยัง?
+              </h3>
+              <button
+                onClick={() => router.push('/battle')}
+                className="w-full bg-linear-to-r from-purple-600 to-pink-600 text-white py-4 rounded-lg text-xl font-bold hover:from-purple-700 hover:to-pink-700 transition transform hover:scale-105"
+              >
+                🎮 เข้าสู่โหมดแบทเทิล (1 vs 1)
+              </button>
+            </div>
+            
+            {/* ฟีเจอร์ที่กำลังจะมา */}
+            <div className="mt-8 p-6 bg-gray-100 rounded-lg">
+              <h3 className="text-2xl font-bold text-gray-700 mb-4">
+                🚀 ฟีเจอร์อื่นๆ ที่กำลังจะมา
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
-                <div className="bg-white p-4 rounded-lg">
-                  <p className="font-bold text-gray-800">👥 จับคู่ 1-1 ออนไลน์</p>
-                  <p className="text-gray-600 text-sm">วาดรูปกับเพื่อนแบบ Real-time</p>
-                </div>
                 <div className="bg-white p-4 rounded-lg">
                   <p className="font-bold text-gray-800">🏆 ระบบแข่งขัน</p>
                   <p className="text-gray-600 text-sm">แข่งวาดรูปและรับคะแนน</p>
@@ -89,6 +98,10 @@ export default function DrawingPage() {
                 <div className="bg-white p-4 rounded-lg">
                   <p className="font-bold text-gray-800">🎯 ภารกิจวาดรูป</p>
                   <p className="text-gray-600 text-sm">ทำภารกิจและปลดล็อกรางวัล</p>
+                </div>
+                <div className="bg-white p-4 rounded-lg">
+                  <p className="font-bold text-gray-800">📊 Leaderboard</p>
+                  <p className="text-gray-600 text-sm">ตารางอันดับผู้เล่น</p>
                 </div>
               </div>
             </div>
