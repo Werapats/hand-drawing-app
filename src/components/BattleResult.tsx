@@ -14,6 +14,7 @@ interface BattleResultProps {
 export default function BattleResult({ roomId, isPlayer1 }: BattleResultProps) {
   const { user } = useAuth();
   const router = useRouter();
+  const [data, setData] = useState<any>(null);
   const [myDrawing, setMyDrawing] = useState('');
   const [opponentDrawing, setOpponentDrawing] = useState('');
   const [myEmail, setMyEmail] = useState('');
@@ -27,20 +28,21 @@ export default function BattleResult({ roomId, isPlayer1 }: BattleResultProps) {
   useEffect(() => {
     const roomRef = doc(db, 'battleRooms', roomId);
     const unsubscribe = onSnapshot(roomRef, (snapshot) => {
-      const data = snapshot.data();
-      if (data) {
-        setTopic(data.topic?.topic || '');
-        setMyDrawing(isPlayer1 ? data.player1?.drawing : data.player2?.drawing);
-        setOpponentDrawing(isPlayer1 ? data.player2?.drawing : data.player1?.drawing);
-        setMyEmail(isPlayer1 ? data.player1?.email : data.player2?.email);
-        setOpponentEmail(isPlayer1 ? data.player2?.email : data.player1?.email);
+      const roomData = snapshot.data();
+      setData(roomData);
+      if (roomData) {
+        setTopic(roomData.topic?.topic || '');
+        setMyDrawing(isPlayer1 ? roomData.player1?.drawing : roomData.player2?.drawing);
+        setOpponentDrawing(isPlayer1 ? roomData.player2?.drawing : roomData.player1?.drawing);
+        setMyEmail(isPlayer1 ? roomData.player1?.email : roomData.player2?.email);
+        setOpponentEmail(isPlayer1 ? roomData.player2?.email : roomData.player1?.email);
         
-        if (data.votes) {
-          setVotes(data.votes);
+        if (roomData.votes) {
+          setVotes(roomData.votes);
         }
 
-        if (data.winner) {
-          setWinner(data.winner);
+        if (roomData.winner) {
+          setWinner(roomData.winner);
           setShowResult(true);
         }
       }
@@ -60,39 +62,70 @@ export default function BattleResult({ roomId, isPlayer1 }: BattleResultProps) {
 
       setHasVoted(true);
 
-      // เช็คว่าทั้งคู่โหวตครบแล้วหรือยัง
-      setTimeout(async () => {
-        const snapshot = await doc(db, 'battleRooms', roomId);
-        // นับคะแนนและประกาศผล
+      // รอ 2 วินาทีแล้วเช็คผล
+      setTimeout(() => {
         checkWinner();
-      }, 1000);
+      }, 2000);
     } catch (error) {
       console.error('Error voting:', error);
     }
   };
 
   const checkWinner = async () => {
-    const roomRef = doc(db, 'battleRooms', roomId);
-    
-    // สมมติว่าทั้งสองคนโหวตแล้ว (ในความเป็นจริงต้องเช็คให้แน่ใจ)
-    let winnerUid = '';
-    if (votes.player1 > votes.player2) {
-      winnerUid = 'player1';
-    } else if (votes.player2 > votes.player1) {
-      winnerUid = 'player2';
-    } else {
-      winnerUid = 'draw';
-    }
+    try {
+      const roomRef = doc(db, 'battleRooms', roomId);
+      
+      let winnerUid = '';
+      const totalVotes = votes.player1 + votes.player2;
+      
+      // ถ้าโหวตครบ 2 คน หรือมีคนออกจากเกม
+      const player1Online = data?.player1?.online !== false;
+      const player2Online = data?.player2?.online !== false;
+      
+      if (!player1Online) {
+        winnerUid = 'player2';
+      } else if (!player2Online) {
+        winnerUid = 'player1';
+      } else if (totalVotes >= 2) {
+        // นับคะแนน
+        if (votes.player1 > votes.player2) {
+          winnerUid = 'player1';
+        } else if (votes.player2 > votes.player1) {
+          winnerUid = 'player2';
+        } else {
+          winnerUid = 'draw';
+        }
+      } else {
+        // ยังโหวตไม่ครบ รอต่อ
+        return;
+      }
 
-    await updateDoc(roomRef, {
-      winner: winnerUid,
-      status: 'finished',
-    });
+      await updateDoc(roomRef, {
+        winner: winnerUid,
+        status: 'finished',
+      });
+    } catch (error) {
+      console.error('Error checking winner:', error);
+    }
   };
 
   const getWinnerText = () => {
+    if (!winner) return '⏳ กำลังนับคะแนน...';
     if (winner === 'draw') return '🤝 เสมอกัน!';
-    if (winner === (isPlayer1 ? 'player1' : 'player2')) return '🎉 คุณชนะ!';
+    
+    const myOnline = isPlayer1 ? data?.player1?.online : data?.player2?.online;
+    const opponentOnline = isPlayer1 ? data?.player2?.online : data?.player1?.online;
+    
+    if (winner === (isPlayer1 ? 'player1' : 'player2')) {
+      if (opponentOnline === false) {
+        return '🎉 คุณชนะ! (คู่แข่งออกจากเกม)';
+      }
+      return '🎉 คุณชนะ!';
+    }
+    
+    if (myOnline === false) {
+      return '😢 คุณแพ้ (เพราะออกจากเกม)';
+    }
     return '😢 คุณแพ้';
   };
 
@@ -162,7 +195,7 @@ export default function BattleResult({ roomId, isPlayer1 }: BattleResultProps) {
           </div>
 
           {/* ผลการโหวต */}
-          {hasVoted && (
+          {hasVoted && !showResult && (
             <div className="bg-yellow-100 border-2 border-yellow-300 rounded-lg p-6 mb-6 text-center">
               <p className="text-2xl font-bold text-gray-800">
                 ✅ คุณโหวตแล้ว! กำลังรอผล...
@@ -174,36 +207,37 @@ export default function BattleResult({ roomId, isPlayer1 }: BattleResultProps) {
           {showResult && (
             <div className="bg-linear-to-r from-yellow-400 to-orange-400 rounded-xl p-8 mb-6 text-center">
               <h2 className="text-5xl font-bold text-white mb-4">
-{getWinnerText()}
-</h2>
-<div className="text-3xl font-bold text-white">
-<p>คะแนนโหวต</p>
-<p className="mt-2">
-{myEmail}: {votes[isPlayer1 ? 'player1' : 'player2']} คะแนน
-</p>
-<p>
-{opponentEmail}: {votes[isPlayer1 ? 'player2' : 'player1']} คะแนน
-</p>
-</div>
-</div>
-)}
-      {/* ปุ่ม */}
-      <div className="flex gap-4 justify-center">
-        <button
-          onClick={() => router.push('/battle')}
-          className="bg-green-600 text-white px-8 py-3 rounded-lg font-bold hover:bg-green-700 transition"
-        >
-          🎮 เล่นอีกครั้ง
-        </button>
-        <button
-          onClick={() => router.push('/drawing')}
-          className="bg-gray-600 text-white px-8 py-3 rounded-lg font-bold hover:bg-gray-700 transition"
-        >
-          🏠 กลับหน้าหลัก
-        </button>
+                {getWinnerText()}
+              </h2>
+              <div className="text-3xl font-bold text-white">
+                <p>คะแนนโหวต</p>
+                <p className="mt-2">
+                  {myEmail}: {votes[isPlayer1 ? 'player1' : 'player2']} คะแนน
+                </p>
+                <p>
+                  {opponentEmail}: {votes[isPlayer1 ? 'player2' : 'player1']} คะแนน
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* ปุ่ม */}
+          <div className="flex gap-4 justify-center">
+            <button
+              onClick={() => router.push('/battle')}
+              className="bg-green-600 text-white px-8 py-3 rounded-lg font-bold hover:bg-green-700 transition"
+            >
+              🎮 เล่นอีกครั้ง
+            </button>
+            <button
+              onClick={() => router.push('/drawing')}
+              className="bg-gray-600 text-white px-8 py-3 rounded-lg font-bold hover:bg-gray-700 transition"
+            >
+              🏠 กลับหน้าหลัก
+            </button>
+          </div>
+        </div>
       </div>
     </div>
-  </div>
-</div>
-);
+  );
 }

@@ -13,6 +13,8 @@ import {
   doc,
   getDocs,
   limit,
+  deleteDoc,
+  getDoc,
 } from 'firebase/firestore';
 import { getRandomTopic } from '@/lib/battleTopics';
 import { useRouter } from 'next/navigation';
@@ -30,12 +32,19 @@ export default function MatchmakingLobby() {
     let unsubscribe: (() => void) | undefined;
 
     if (searching && roomId) {
-      // ฟังการเปลี่ยนแปลงของห้อง
       const roomRef = doc(db, 'battleRooms', roomId);
       unsubscribe = onSnapshot(roomRef, (snapshot) => {
+        if (!snapshot.exists()) {
+          setStatusMessage('คู่แข่งยกเลิก กำลังกลับสู่หน้าหลัก...');
+          setTimeout(() => {
+            setSearching(false);
+            setRoomId(null);
+          }, 2000);
+          return;
+        }
+
         const data = snapshot.data();
-        if (data?.status === 'ready') {
-          // มีคู่แข่งแล้ว เริ่มเกม!
+        if (data?.status === 'ready' && data?.player2) {
           setStatusMessage('พบคู่แข่งแล้ว! กำลังเริ่มเกม...');
           setTimeout(() => {
             router.push(`/battle?roomId=${roomId}`);
@@ -49,6 +58,25 @@ export default function MatchmakingLobby() {
     };
   }, [searching, roomId, user, router]);
 
+  // ล้างห้องเก่าที่มีอายุเกิน 5 นาที
+  const cleanOldRooms = async () => {
+    try {
+      const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+      const roomsRef = collection(db, 'battleRooms');
+      const q = query(
+        roomsRef,
+        where('createdAt', '<', fiveMinutesAgo)
+      );
+      const snapshot = await getDocs(q);
+
+      for (const document of snapshot.docs) {
+        await deleteDoc(doc(db, 'battleRooms', document.id));
+      }
+    } catch (error) {
+      console.error('Error cleaning old rooms:', error);
+    }
+  };
+
   const startMatchmaking = async () => {
     if (!user) return;
 
@@ -56,27 +84,60 @@ export default function MatchmakingLobby() {
     setStatusMessage('กำลังค้นหาคู่แข่ง...');
 
     try {
-      // หาห้องที่รอคนอยู่
+      // ล้างห้องเก่าก่อน
+      await cleanOldRooms();
+
+      // หาห้องที่รอคนอยู่ (ต้องมีทุกเงื่อนไขนี้)
+      const oneMinuteAgo = Date.now() - 60 * 1000;
       const roomsRef = collection(db, 'battleRooms');
       const q = query(
         roomsRef,
         where('status', '==', 'waiting'),
+        where('createdAt', '>', oneMinuteAgo),
+        where('player1.online', '==', true),
+        where('player1.isSearching', '==', true), // ✅ เพิ่มเงื่อนไขนี้
         limit(1)
       );
       const snapshot = await getDocs(q);
 
       if (!snapshot.empty) {
-        // เจอห้องที่รออยู่ เข้าร่วมเลย
         const existingRoom = snapshot.docs[0];
+        const existingRoomData = existingRoom.data();
         const existingRoomId = existingRoom.id;
 
+        // เช็คว่าไม่ใช่ห้องของตัวเอง
+        if (existingRoomData.player1?.uid === user.uid) {
+          setRoomId(existingRoomId);
+          setStatusMessage('กำลังรอคู่แข่ง...');
+          return;
+        }
+
+        // Double check ว่า player1 ยังกำลังหาคู่อยู่จริง
+        const roomSnapshot = await getDoc(doc(db, 'battleRooms', existingRoomId));
+        const currentData = roomSnapshot.data();
+        
+        if (!currentData || 
+            currentData.player1?.online !== true || 
+            currentData.player1?.isSearching !== true || // ✅ เช็คเพิ่ม
+            currentData.status !== 'waiting') {
+          // ห้องไม่ valid แล้ว ลบทิ้ง
+          await deleteDoc(doc(db, 'battleRooms', existingRoomId));
+          // ลองหาใหม่
+          startMatchmaking();
+          return;
+        }
+
+        // เข้าร่วมห้อง
         await updateDoc(doc(db, 'battleRooms', existingRoomId), {
           player2: {
             uid: user.uid,
             email: user.email,
-            ready: false,
+            ready: true,
+            online: true,
+            isSearching: true, // ✅ เพิ่ม
           },
           status: 'ready',
+          lastActivity: Date.now(),
         });
 
         setRoomId(existingRoomId);
@@ -92,16 +153,26 @@ export default function MatchmakingLobby() {
           player1: {
             uid: user.uid,
             email: user.email,
-            ready: false,
+            ready: true,
+            online: true,
+            isSearching: true, // ✅ เพิ่ม
           },
           topic,
           status: 'waiting',
           createdAt: Date.now(),
+          lastActivity: Date.now(),
+          votes: {
+            player1: 0,
+            player2: 0,
+          },
         };
 
         const docRef = await addDoc(collection(db, 'battleRooms'), newRoom);
         setRoomId(docRef.id);
         setStatusMessage('กำลังรอคู่แข่ง...');
+
+        // เริ่มส่ง heartbeat
+        startHeartbeat(docRef.id);
       }
     } catch (error) {
       console.error('Error in matchmaking:', error);
@@ -110,11 +181,102 @@ export default function MatchmakingLobby() {
     }
   };
 
-  const cancelMatchmaking = () => {
+  // Heartbeat เพื่อบอกว่ายังออนไลน์และยังหาคู่อยู่
+  let heartbeatInterval: NodeJS.Timeout | null = null;
+
+  const startHeartbeat = (roomId: string) => {
+    heartbeatInterval = setInterval(async () => {
+      try {
+        const roomRef = doc(db, 'battleRooms', roomId);
+        const roomSnap = await getDoc(roomRef);
+        
+        if (roomSnap.exists()) {
+          await updateDoc(roomRef, {
+            'player1.online': true,
+            'player1.isSearching': true, // ✅ เพิ่ม
+            lastActivity: Date.now(),
+          });
+        } else {
+          // ห้องถูกลบแล้ว หยุด heartbeat
+          if (heartbeatInterval) {
+            clearInterval(heartbeatInterval);
+            heartbeatInterval = null;
+          }
+        }
+      } catch (error) {
+        console.error('Heartbeat error:', error);
+      }
+    }, 5000); // ทุก 5 วินาที
+  };
+
+  const stopHeartbeat = () => {
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
+  };
+
+  const cancelMatchmaking = async () => {
+    stopHeartbeat();
+
+    if (roomId) {
+      try {
+        const roomRef = doc(db, 'battleRooms', roomId);
+        const roomSnap = await getDoc(roomRef);
+        
+        if (roomSnap.exists()) {
+          const roomData = roomSnap.data();
+          // ลบห้องถ้ายังไม่มีคู่
+          if (roomData.status === 'waiting' && !roomData.player2) {
+            await deleteDoc(roomRef);
+          } else {
+            // ถ้ามีคู่แล้ว แค่อัพเดทว่าไม่หาคู่แล้ว
+            await updateDoc(roomRef, {
+              'player1.isSearching': false,
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error canceling matchmaking:', error);
+      }
+    }
+    
     setSearching(false);
     setRoomId(null);
     setStatusMessage('');
   };
+
+  // Cleanup เมื่อ component unmount หรือออกจากหน้า
+  useEffect(() => {
+    return () => {
+      stopHeartbeat();
+      if (roomId && searching) {
+        const cleanup = async () => {
+          try {
+            const roomRef = doc(db, 'battleRooms', roomId);
+            const roomSnap = await getDoc(roomRef);
+            
+            if (roomSnap.exists()) {
+              const roomData = roomSnap.data();
+              if (roomData.status === 'waiting' && !roomData.player2) {
+                // ลบห้องถ้ายังไม่มีคู่
+                await deleteDoc(roomRef);
+              } else {
+                // มีคู่แล้ว แค่อัพเดทสถานะ
+                await updateDoc(roomRef, {
+                  'player1.isSearching': false,
+                  'player1.online': false,
+                });
+              }
+            }
+          } catch (error) {
+            console.error('Error cleanup:', error);
+          }
+        };
+        cleanup();
+      }
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-linear-to-br from-purple-900 via-purple-700 to-pink-600 flex items-center justify-center p-6">
@@ -134,6 +296,7 @@ export default function MatchmakingLobby() {
             <li>👀 <strong>ดูกัน:</strong> เห็นภาพวาดของคู่แข่ง Real-time</li>
             <li>🗳️ <strong>โหวต:</strong> ทั้งคู่โหวตให้กันหลังจบ</li>
             <li>🏆 <strong>ชนะ:</strong> คนที่ได้คะแนนโหวตมากกว่า</li>
+            <li>⚠️ <strong>หมายเหตุ:</strong> ถ้าออกระหว่างเกม จะแพ้ทันที</li>
           </ul>
         </div>
 
@@ -155,7 +318,7 @@ export default function MatchmakingLobby() {
               onClick={cancelMatchmaking}
               className="bg-red-500 text-white px-8 py-3 rounded-lg font-bold hover:bg-red-600 transition"
             >
-              ยกเลิก
+              ❌ ยกเลิก
             </button>
           </div>
         )}

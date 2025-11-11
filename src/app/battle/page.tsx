@@ -88,7 +88,12 @@ function BattlePageContent() {
   if (gameState === 'playing') {
     return (
       <div className="min-h-screen bg-gray-900 p-6">
-        <BattleDrawing roomId={roomId} isPlayer1={isPlayer1} onTimeUp={handleTimeUp} />
+        <BattleDrawing 
+          roomId={roomId} 
+          isPlayer1={isPlayer1} 
+          onTimeUp={handleTimeUp}
+          onQuit={() => router.push('/drawing')}
+        />
       </div>
     );
   }
@@ -103,8 +108,11 @@ function BattlePageContent() {
 export default function BattlePage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-xl">กำลังโหลด...</p>
+      <div className="min-h-screen flex items-center justify-center bg-gray-900">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-purple-600 mx-auto mb-4"></div>
+          <p className="text-xl text-white">กำลังโหลด...</p>
+        </div>
       </div>
     }>
       <BattlePageContent />
